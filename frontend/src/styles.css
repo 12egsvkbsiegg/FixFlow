@@ -1134,3 +1134,9 @@ body.dark-mode .social-icon {
     gap: 6px;
   }
 }
+
+.otp-helper {
+  margin: 0 0 16px;
+  color: #475569;
+  font-size: 14px;
+}

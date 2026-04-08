@@ -45,6 +45,9 @@ function App() {
   const [user, setUser] = useState(stored.user);
   const [authMode, setAuthMode] = useState("login");
   const [authMessage, setAuthMessage] = useState("");
+  const [otpCode, setOtpCode] = useState("");
+  const [otpMessage, setOtpMessage] = useState("");
+  const [pendingEmail, setPendingEmail] = useState("");
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -61,7 +64,6 @@ function App() {
   const [pincode, setPincode] = useState("");
 
   const [complaints, setComplaints] = useState([]);
-  const [dashboard, setDashboard] = useState(null);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
 
@@ -95,7 +97,6 @@ function App() {
     setToken("");
     setUser(null);
     setComplaints([]);
-    setDashboard(null);
     setMessage("");
     setEditingId("");
     setEditingText("");
@@ -121,7 +122,10 @@ function App() {
     const data = await response.json();
 
     if (!response.ok) {
-      throw new Error(data.message || "Request failed.");
+      const error = new Error(data.message || "Request failed.");
+      error.status = response.status;
+      error.payload = data;
+      throw error;
     }
 
     return data;
@@ -134,12 +138,8 @@ function App() {
 
     try {
       if (user.role === "admin") {
-        const [allComplaints, stats] = await Promise.all([
-          request("/complaints"),
-          request("/admin/dashboard"),
-        ]);
+        const allComplaints = await request("/complaints");
         setComplaints(allComplaints);
-        setDashboard(stats);
       } else {
         const myComplaints = await request("/complaints/my");
         setComplaints(myComplaints);
@@ -174,6 +174,7 @@ function App() {
   const handleAuth = async (event) => {
     event.preventDefault();
     setAuthMessage("");
+    setOtpMessage("");
 
     if (!email || !password || (authMode === "signup" && !name)) {
       setAuthMessage("Please fill all required fields.");
@@ -199,17 +200,94 @@ function App() {
         body: JSON.stringify(payload),
       });
 
+      if (authMode === "signup") {
+        setPendingEmail(email);
+        setAuthMessage(data.message || "OTP sent to your email.");
+        setOtpCode("");
+        setAuthMode("otp");
+      } else {
+        saveAuth(data.token, data.user);
+        setName("");
+        setEmail("");
+        setPassword("");
+        setRole("user");
+        setPendingEmail("");
+        setAuthMessage("Login successful.");
+        navigate("/");
+      }
+    } catch (error) {
+      const needsVerification =
+        error?.payload?.needsVerification ||
+        error?.status === 403 ||
+        error.message?.includes("Email not verified");
+      if (authMode === "login" && needsVerification) {
+        setPendingEmail(email);
+        setAuthMode("otp");
+        setOtpMessage(error.message || "Email not verified. Please verify with OTP.");
+      } else {
+        setAuthMessage(error.message);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleVerifyOtp = async (event) => {
+    event.preventDefault();
+    setOtpMessage("");
+
+    if (!pendingEmail) {
+      setOtpMessage("Email is missing. Please login or signup again.");
+      return;
+    }
+
+    if (!otpCode.trim()) {
+      setOtpMessage("Please enter the OTP.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const data = await request("/auth/verify-otp", {
+        method: "POST",
+        headers: {},
+        body: JSON.stringify({ email: pendingEmail, otp: otpCode }),
+      });
       saveAuth(data.token, data.user);
+      setOtpCode("");
+      setOtpMessage("");
+      setPendingEmail("");
       setName("");
       setEmail("");
       setPassword("");
       setRole("user");
-      setAuthMessage(
-        authMode === "signup" ? "Signup successful." : "Login successful.",
-      );
+      setAuthMode("login");
       navigate("/");
     } catch (error) {
-      setAuthMessage(error.message);
+      setOtpMessage(error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleResendOtp = async () => {
+    setOtpMessage("");
+
+    if (!pendingEmail) {
+      setOtpMessage("Email is missing. Please login or signup again.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const data = await request("/auth/resend-otp", {
+        method: "POST",
+        headers: {},
+        body: JSON.stringify({ email: pendingEmail }),
+      });
+      setOtpMessage(data.message || "OTP resent to your email.");
+    } catch (error) {
+      setOtpMessage(error.message);
     } finally {
       setLoading(false);
     }
@@ -484,6 +562,8 @@ function App() {
               authMode={authMode}
               setAuthMode={setAuthMode}
               handleAuth={handleAuth}
+              handleVerifyOtp={handleVerifyOtp}
+              handleResendOtp={handleResendOtp}
               name={name}
               setName={setName}
               email={email}
@@ -494,6 +574,10 @@ function App() {
               setRole={setRole}
               loading={loading}
               authMessage={authMessage}
+              otpCode={otpCode}
+              setOtpCode={setOtpCode}
+              otpMessage={otpMessage}
+              pendingEmail={pendingEmail}
             />
           }
         />

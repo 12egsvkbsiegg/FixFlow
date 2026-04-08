@@ -30,7 +30,7 @@ const getTransporter = () => {
   return transporter;
 };
 
-const sendComplaintMail = async ({ to, subject, text }) => {
+const sendMail = async ({ to, subject, text }) => {
   const from = process.env.EMAIL_FROM || "no-reply@complaint-tracker.local";
 
   if (!to) {
@@ -44,4 +44,16 @@ const sendComplaintMail = async ({ to, subject, text }) => {
   }
 };
 
-module.exports = { sendComplaintMail };
+const sendComplaintMail = async ({ to, subject, text }) => {
+  await sendMail({ to, subject, text });
+};
+
+const sendOtpMail = async ({ to, otpCode, expiryMinutes }) => {
+  await sendMail({
+    to,
+    subject: "Verify your email (OTP)",
+    text: `Your OTP is ${otpCode}. It expires in ${expiryMinutes} minutes.`
+  });
+};
+
+module.exports = { sendComplaintMail, sendOtpMail };

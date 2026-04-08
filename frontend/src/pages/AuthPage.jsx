@@ -2,6 +2,8 @@ const AuthPage = ({
   authMode,
   setAuthMode,
   handleAuth,
+  handleVerifyOtp,
+  handleResendOtp,
   name,
   setName,
   email,
@@ -11,8 +13,14 @@ const AuthPage = ({
   role,
   setRole,
   loading,
-  authMessage
+  authMessage,
+  otpCode,
+  setOtpCode,
+  otpMessage,
+  pendingEmail
 }) => {
+  const isOtpMode = authMode === "otp";
+
   return (
     <div className="container auth-shell">
       <section className="auth-layout">
@@ -30,53 +38,101 @@ const AuthPage = ({
         </div>
 
         <div id="profile" className="card auth-card reveal delay-1">
-          <h2>{authMode === "signup" ? "Create Account" : "Welcome Back"}</h2>
-          <form onSubmit={handleAuth}>
-            {authMode === "signup" && (
-              <>
-                <label htmlFor="name">Name</label>
-                <input id="name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Enter full name" />
-              </>
-            )}
+          <h2>
+            {isOtpMode ? "Verify Email" : authMode === "signup" ? "Create Account" : "Welcome Back"}
+          </h2>
 
-            <label htmlFor="email">Email</label>
-            <input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@gmail.com" />
+          {!isOtpMode && (
+            <>
+              <form onSubmit={handleAuth}>
+                {authMode === "signup" && (
+                  <>
+                    <label htmlFor="name">Name</label>
+                    <input
+                      id="name"
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      placeholder="Enter full name"
+                    />
+                  </>
+                )}
 
-            <label htmlFor="password">Password</label>
-            <input
-              id="password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Minimum 6 characters"
-            />
+                <label htmlFor="email">Email</label>
+                <input
+                  id="email"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="you@gmail.com"
+                />
 
-            {authMode === "signup" && (
-              <>
-                <label htmlFor="role">Role</label>
-                <select id="role" value={role} onChange={(e) => setRole(e.target.value)}>
-                  <option value="user">User</option>
-                  <option value="admin">Admin</option>
-                </select>
-              </>
-            )}
+                <label htmlFor="password">Password</label>
+                <input
+                  id="password"
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Minimum 6 characters"
+                />
 
-            <button type="submit" disabled={loading}>
-              {loading ? "Please wait..." : authMode === "signup" ? "Signup" : "Login"}
-            </button>
-          </form>
+                {authMode === "signup" && (
+                  <>
+                    <label htmlFor="role">Role</label>
+                    <select id="role" value={role} onChange={(e) => setRole(e.target.value)}>
+                      <option value="user">User</option>
+                      <option value="admin">Admin</option>
+                    </select>
+                  </>
+                )}
 
-          <button
-            type="button"
-            className="ghost-btn"
-            onClick={() => {
-              setAuthMode(authMode === "signup" ? "login" : "signup");
-            }}
-          >
-            Switch to {authMode === "signup" ? "Login" : "Signup"}
-          </button>
+                <button type="submit" disabled={loading}>
+                  {loading ? "Please wait..." : authMode === "signup" ? "Signup" : "Login"}
+                </button>
+              </form>
 
-          {authMessage && <div className="message">{authMessage}</div>}
+              <button
+                type="button"
+                className="ghost-btn"
+                onClick={() => {
+                  setAuthMode(authMode === "signup" ? "login" : "signup");
+                }}
+              >
+                Switch to {authMode === "signup" ? "Login" : "Signup"}
+              </button>
+
+              {authMessage && <div className="message">{authMessage}</div>}
+            </>
+          )}
+
+          {isOtpMode && (
+            <>
+              <p className="otp-helper">
+                We sent a 4-digit OTP to <strong>{pendingEmail || "your email"}</strong>. It expires in 3 minutes.
+              </p>
+              <form onSubmit={handleVerifyOtp}>
+                <label htmlFor="otp">OTP Code</label>
+                <input
+                  id="otp"
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={4}
+                  value={otpCode}
+                  onChange={(e) => setOtpCode(e.target.value)}
+                  placeholder="Enter 4-digit OTP"
+                />
+                <button type="submit" disabled={loading}>
+                  {loading ? "Please wait..." : "Verify OTP"}
+                </button>
+              </form>
+              <button type="button" className="ghost-btn" onClick={handleResendOtp} disabled={loading}>
+                Resend OTP
+              </button>
+              <button type="button" className="ghost-btn" onClick={() => setAuthMode("login")} disabled={loading}>
+                Back to Login
+              </button>
+              {otpMessage && <div className="message">{otpMessage}</div>}
+            </>
+          )}
         </div>
       </section>
     </div>

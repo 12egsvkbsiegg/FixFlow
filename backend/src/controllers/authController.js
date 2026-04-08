@@ -1,9 +1,19 @@
 const bcrypt = require("bcryptjs");
 const User = require("../models/User");
 const { signToken } = require("../services/tokenService");
+const { sendOtpMail } = require("../services/emailService");
 
 const isValidGmail = (email) => {
   return /^[A-Z0-9._%+-]+@gmail\.com$/i.test(email || "");
+};
+
+const OTP_EXPIRY_MINUTES = 3;
+const OTP_RESEND_COOLDOWN_SECONDS = 60;
+const OTP_RESEND_LIMIT = 3;
+const OTP_RESEND_WINDOW_MINUTES = 10;
+
+const generateOtp = () => {
+  return String(Math.floor(1000 + Math.random() * 9000));
 };
 
 const signup = async (req, res) => {
@@ -25,23 +35,29 @@ const signup = async (req, res) => {
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    const user = await User.create({
+    const otpCode = generateOtp();
+    const otpExpiresAt = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000);
+    const now = new Date();
+    const otpResendResetAt = new Date(now.getTime() + OTP_RESEND_WINDOW_MINUTES * 60 * 1000);
+
+    await User.create({
       name,
       email,
       password: hashedPassword,
-      role: role === "admin" ? "admin" : "user"
+      role: role === "admin" ? "admin" : "user",
+      isVerified: false,
+      otpCode,
+      otpExpiresAt,
+      otpLastSentAt: now,
+      otpResendCount: 0,
+      otpResendResetAt
     });
 
-    const token = signToken(user);
+    await sendOtpMail({ to: email, otpCode, expiryMinutes: OTP_EXPIRY_MINUTES });
 
     return res.status(201).json({
-      token,
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        role: user.role
-      }
+      message: "OTP sent to your email. Please verify to continue.",
+      email
     });
   } catch (error) {
     return res.status(500).json({
@@ -67,6 +83,10 @@ const login = async (req, res) => {
 
     if (!user) {
       return res.status(401).json({ message: "Invalid credentials." });
+    }
+
+    if (!user.isVerified) {
+      return res.status(403).json({ message: "Email not verified. Please verify with OTP.", needsVerification: true });
     }
 
     const isMatch = await bcrypt.compare(password, user.password);
@@ -97,4 +117,116 @@ const getMe = async (req, res) => {
   return res.json({ user: req.user });
 };
 
-module.exports = { signup, login, getMe };
+const verifyOtp = async (req, res) => {
+  try {
+    const { email, otp } = req.body;
+
+    if (!email || !otp) {
+      return res.status(400).json({ message: "email and otp are required." });
+    }
+
+    const user = await User.findOne({ email: email.toLowerCase() });
+    if (!user) {
+      return res.status(404).json({ message: "User not found." });
+    }
+
+    if (user.isVerified) {
+      return res.status(400).json({ message: "Email already verified." });
+    }
+
+    if (!user.otpCode || !user.otpExpiresAt) {
+      return res.status(400).json({ message: "OTP not found. Please resend OTP." });
+    }
+
+    if (user.otpCode !== String(otp).trim()) {
+      return res.status(400).json({ message: "Invalid OTP." });
+    }
+
+    if (user.otpExpiresAt.getTime() < Date.now()) {
+      return res.status(400).json({ message: "OTP expired. Please resend OTP." });
+    }
+
+    user.isVerified = true;
+    user.otpCode = "";
+    user.otpExpiresAt = null;
+    user.otpLastSentAt = null;
+    user.otpResendCount = 0;
+    user.otpResendResetAt = null;
+    await user.save();
+
+    const token = signToken(user);
+
+    return res.json({
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role
+      }
+    });
+  } catch (error) {
+    return res.status(500).json({
+      message: "Failed to verify OTP.",
+      error: error.message
+    });
+  }
+};
+
+const resendOtp = async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ message: "email is required." });
+    }
+
+    const user = await User.findOne({ email: email.toLowerCase() });
+    if (!user) {
+      return res.status(404).json({ message: "User not found." });
+    }
+
+    if (user.isVerified) {
+      return res.status(400).json({ message: "Email already verified." });
+    }
+
+    const now = new Date();
+
+    if (user.otpLastSentAt) {
+      const secondsSinceLast = (now.getTime() - user.otpLastSentAt.getTime()) / 1000;
+      if (secondsSinceLast < OTP_RESEND_COOLDOWN_SECONDS) {
+        const waitSeconds = Math.ceil(OTP_RESEND_COOLDOWN_SECONDS - secondsSinceLast);
+        return res.status(429).json({ message: `Please wait ${waitSeconds}s before resending OTP.` });
+      }
+    }
+
+    if (!user.otpResendResetAt || user.otpResendResetAt.getTime() < now.getTime()) {
+      user.otpResendCount = 0;
+      user.otpResendResetAt = new Date(now.getTime() + OTP_RESEND_WINDOW_MINUTES * 60 * 1000);
+    }
+
+    if (user.otpResendCount >= OTP_RESEND_LIMIT) {
+      return res.status(429).json({ message: "OTP resend limit reached. Please try again later." });
+    }
+
+    const otpCode = generateOtp();
+    const otpExpiresAt = new Date(now.getTime() + OTP_EXPIRY_MINUTES * 60 * 1000);
+
+    user.otpCode = otpCode;
+    user.otpExpiresAt = otpExpiresAt;
+    user.otpLastSentAt = now;
+    user.otpResendCount += 1;
+    await user.save();
+
+    await sendOtpMail({ to: user.email, otpCode, expiryMinutes: OTP_EXPIRY_MINUTES });
+
+    return res.json({ message: "OTP resent to your email.", email: user.email });
+  } catch (error) {
+    return res.status(500).json({
+      message: "Failed to resend OTP.",
+      error: error.message
+    });
+  }
+};
+
+module.exports = { signup, login, getMe, verifyOtp, resendOtp };
