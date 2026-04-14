@@ -7,8 +7,19 @@ import NewComplaintPage from "./pages/NewComplaintPage";
 import ComplaintsPage from "./pages/ComplaintsPage";
 
 const DEFAULT_API_BASE = "http://localhost:5000/api";
-const API_BASE = import.meta.env.VITE_API_BASE || DEFAULT_API_BASE;
-const API_HOST = API_BASE.replace("/api", "");
+
+const normalizeApiBase = (value) => {
+  const trimmedValue = (value || "").trim().replace(/\/+$/, "");
+
+  if (!trimmedValue) {
+    return DEFAULT_API_BASE;
+  }
+
+  return trimmedValue.endsWith("/api") ? trimmedValue : `${trimmedValue}/api`;
+};
+
+const API_BASE = normalizeApiBase(import.meta.env.VITE_API_BASE);
+const API_HOST = API_BASE.replace(/\/api$/, "");
 
 const getStoredAuth = () => {
   const token = localStorage.getItem("cts_token");
@@ -119,7 +130,24 @@ function App() {
       headers,
     });
 
-    const data = await response.json();
+    const contentType = response.headers.get("content-type") || "";
+    const rawBody = await response.text();
+    let data = {};
+
+    if (rawBody) {
+      if (contentType.includes("application/json")) {
+        data = JSON.parse(rawBody);
+      } else {
+        try {
+          data = JSON.parse(rawBody);
+        } catch {
+          const error = new Error("Server returned an invalid response. Check API base URL and backend status.");
+          error.status = response.status;
+          error.payload = { rawBody };
+          throw error;
+        }
+      }
+    }
 
     if (!response.ok) {
       const error = new Error(data.message || "Request failed.");
