@@ -28,21 +28,41 @@ const signup = async (req, res) => {
       return res.status(400).json({ message: "Please use a valid Gmail address." });
     }
 
-    const existing = await User.findOne({ email: email.toLowerCase() });
-    if (existing) {
-      return res.status(409).json({ message: "Email is already registered." });
-    }
-
+    const normalizedEmail = email.toLowerCase().trim();
     const hashedPassword = await bcrypt.hash(password, 10);
-
     const otpCode = generateOtp();
-    const otpExpiresAt = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000);
     const now = new Date();
+    const otpExpiresAt = new Date(now.getTime() + OTP_EXPIRY_MINUTES * 60 * 1000);
     const otpResendResetAt = new Date(now.getTime() + OTP_RESEND_WINDOW_MINUTES * 60 * 1000);
 
+    const existing = await User.findOne({ email: normalizedEmail });
+    if (existing) {
+      if (existing.isVerified) {
+        return res.status(409).json({ message: "Email is already registered." });
+      }
+
+      existing.name = name.trim();
+      existing.email = normalizedEmail;
+      existing.password = hashedPassword;
+      existing.role = role === "admin" ? "admin" : "user";
+      existing.otpCode = otpCode;
+      existing.otpExpiresAt = otpExpiresAt;
+      existing.otpLastSentAt = now;
+      existing.otpResendCount = 0;
+      existing.otpResendResetAt = otpResendResetAt;
+      await existing.save();
+
+      await sendOtpMail({ to: normalizedEmail, otpCode, expiryMinutes: OTP_EXPIRY_MINUTES });
+
+      return res.json({
+        message: "Account already exists but is not verified. A new OTP has been sent.",
+        email: normalizedEmail
+      });
+    }
+
     await User.create({
-      name,
-      email,
+      name: name.trim(),
+      email: normalizedEmail,
       password: hashedPassword,
       role: role === "admin" ? "admin" : "user",
       isVerified: false,
@@ -57,7 +77,7 @@ const signup = async (req, res) => {
 
     return res.status(201).json({
       message: "OTP sent to your email. Please verify to continue.",
-      email
+      email: normalizedEmail
     });
   } catch (error) {
     return res.status(500).json({
