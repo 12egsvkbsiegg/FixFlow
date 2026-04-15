@@ -15,7 +15,20 @@ const normalizeApiBase = (value) => {
     return DEFAULT_API_BASE;
   }
 
-  return trimmedValue.endsWith("/api") ? trimmedValue : `${trimmedValue}/api`;
+  const normalizedValue = trimmedValue.endsWith("/api") ? trimmedValue : `${trimmedValue}/api`;
+
+  try {
+    const url = new URL(normalizedValue);
+    const isLocalhost = url.hostname === "localhost" || url.hostname === "127.0.0.1";
+
+    if (isLocalhost && url.protocol === "https:") {
+      url.protocol = "http:";
+    }
+
+    return url.toString().replace(/\/+$/, "");
+  } catch {
+    return normalizedValue;
+  }
 };
 
 const API_BASE = normalizeApiBase(import.meta.env.VITE_API_BASE);
@@ -248,10 +261,34 @@ function App() {
         error?.payload?.needsVerification ||
         error?.status === 403 ||
         error.message?.includes("Email not verified");
+      const emailAlreadyRegistered =
+        error?.status === 409 || error.message?.includes("already registered");
+
       if (authMode === "login" && needsVerification) {
         setPendingEmail(email);
         setAuthMode("otp");
         setOtpMessage(error.message || "Email not verified. Please verify with OTP.");
+      } else if (authMode === "signup" && emailAlreadyRegistered) {
+        setPendingEmail(email);
+
+        try {
+          const resendData = await request("/auth/resend-otp", {
+            method: "POST",
+            headers: {},
+            body: JSON.stringify({ email }),
+          });
+
+          setOtpCode("");
+          setAuthMode("otp");
+          setOtpMessage(resendData.message || "Account exists but is not verified. OTP resent to your email.");
+        } catch (resendError) {
+          if (resendError.message?.includes("already verified")) {
+            setAuthMode("login");
+            setAuthMessage("Email is already registered. Please login.");
+          } else {
+            setAuthMessage(resendError.message || error.message);
+          }
+        }
       } else {
         setAuthMessage(error.message);
       }
